@@ -31,6 +31,7 @@ jobs:
         run: |
           npx --yes @electron/packager@19.1.0 . "StreamGuardian-OBS-Bridge" \
             --platform=win32 --arch=x64 \
+            --icon=icon.ico \
             --out=../electron-release --overwrite
 
       - name: Restructure for one-click launch (legacy ZIP layout)
