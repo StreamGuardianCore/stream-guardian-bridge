@@ -1,0 +1,16 @@
+{
+  "name": "stream-guardian-obs-bridge",
+  "version": "1.2.0",
+  "author": "Stream Guardian",
+  "description": "Stream Guardian OBS Bridge — Relay OBS WebSocket data to your dashboard",
+  "main": "main.cjs",
+  "icon": "icon.ico",
+  "dependencies": {
+    "obs-websocket-js": "^5.0.7",
+    "@supabase/supabase-js": "^2.98.0"
+  },
+  "devDependencies": {
+    "electron": "^35.0.1",
+    "@electron/packager": "^19.1.0"
+  }
+}

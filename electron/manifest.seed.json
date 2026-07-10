@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0",
+  "releasedAt": "2026-05-18T00:00:00Z",
+  "notes": "Initial Stream Guardian OBS Bridge release.",
+  "minSupported": "1.0.0",
+  "platforms": {
+    "win32-x64":  { "url": "https://azdhflrooyftnuzvgvye.supabase.co/storage/v1/object/public/companion-app/StreamGuardian-OBS-Bridge-win32-x64.zip",  "sha256": "" },
+    "darwin-x64": { "url": "https://azdhflrooyftnuzvgvye.supabase.co/storage/v1/object/public/companion-app/StreamGuardian-OBS-Bridge-darwin-x64.zip", "sha256": "" },
+    "linux-x64":  { "url": "https://azdhflrooyftnuzvgvye.supabase.co/storage/v1/object/public/companion-app/StreamGuardian-OBS-Bridge-linux-x64.tar.gz","sha256": "" }
+  }
+}

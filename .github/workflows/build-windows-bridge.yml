@@ -1,0 +1,187 @@
+name: Build Windows Bridge
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install electron dependencies
+        working-directory: electron
+        run: |
+          rm -f package-lock.json
+          npm install --package-lock=false --registry=https://registry.npmjs.org
+
+      - name: Package for Windows
+        working-directory: electron
+        run: |
+          npx --yes @electron/packager@19.1.0 . "StreamGuardian-OBS-Bridge" \
+            --platform=win32 --arch=x64 \
+            --out=../electron-release --overwrite
+
+      - name: Restructure for one-click launch (legacy ZIP layout)
+        run: |
+          STAGE="$GITHUB_WORKSPACE/stage/StreamGuardian-OBS-Bridge"
+          mkdir -p "$STAGE"
+          cp -r electron-release/StreamGuardian-OBS-Bridge-win32-x64 "$STAGE/app"
+          cp "electron/Start Stream Guardian.bat" "$STAGE/Start Stream Guardian.bat"
+          cp electron/README.txt "$STAGE/README.txt"
+
+      - name: Code sign the Bridge executable (Authenticode)
+        if: ${{ env.WINDOWS_CERT_PFX_BASE64 != '' }}
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP "sg-signing.pfx"
+          [System.IO.File]::WriteAllBytes($pfxPath, [System.Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+
+          $signtool = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match "x64\\signtool.exe$" } | Select-Object -First 1).FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          Write-Host "Using signtool: $signtool"
+
+          # Sign the executable in BOTH locations so legacy zip + new installer payload are signed.
+          $exes = @(
+            "$env:GITHUB_WORKSPACE\stage\StreamGuardian-OBS-Bridge\app\StreamGuardian-OBS-Bridge.exe",
+            "$env:GITHUB_WORKSPACE\electron-release\StreamGuardian-OBS-Bridge-win32-x64\StreamGuardian-OBS-Bridge.exe"
+          )
+          foreach ($exe in $exes) {
+            & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+              /f $pfxPath /p $env:WINDOWS_CERT_PASSWORD $exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed for $exe" }
+            & $signtool verify /pa /v $exe
+            if ($LASTEXITCODE -ne 0) { throw "Signature verification failed for $exe" }
+          }
+
+          # Re-export the pfx path for the installer signing step below.
+          "PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Warn when signing is skipped
+        if: ${{ env.WINDOWS_CERT_PFX_BASE64 == '' }}
+        run: |
+          echo "::warning::WINDOWS_CERT_PFX_BASE64 secret not set — shipping an unsigned Windows build. Users will see SmartScreen warnings."
+
+      - name: Zip output (legacy layout — used by in-app auto-updater)
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "stage\StreamGuardian-OBS-Bridge" -DestinationPath "StreamGuardian-OBS-Bridge-win32-x64.zip" -Force
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          echo "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Build NSIS installer (clean one-file download)
+        shell: bash
+        env:
+          MSYS_NO_PATHCONV: "1"
+          MSYS2_ARG_CONV_EXCL: "*"
+        run: |
+          VERSION=$(node -p "require('./electron/package.json').version")
+          # Copy icon next to the .nsi script so MUI_ICON resolves
+          cp electron/icon.ico electron/installer.nsi.dir 2>/dev/null || true
+          SRC_WIN=$(cygpath -w "$GITHUB_WORKSPACE/electron-release/StreamGuardian-OBS-Bridge-win32-x64")
+          cd electron
+          # Disable Git-Bash path mangling so /D... flags reach makensis unmodified
+          MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
+            "/c/Program Files (x86)/NSIS/makensis.exe" \
+            "-DPRODUCT_VERSION=$VERSION" \
+            "-DSOURCE_DIR=$SRC_WIN" \
+            installer.nsi
+          mv "StreamGuardian-OBS-Bridge-Setup-$VERSION.exe" "$GITHUB_WORKSPACE/StreamGuardian-OBS-Bridge-Setup.exe"
+
+
+      - name: Sign the NSIS installer
+        if: ${{ env.WINDOWS_CERT_PFX_BASE64 != '' }}
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $signtool = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match "x64\\signtool.exe$" } | Select-Object -First 1).FullName
+          $installer = "$env:GITHUB_WORKSPACE\StreamGuardian-OBS-Bridge-Setup.exe"
+          & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            /f $env:PFX_PATH /p $env:WINDOWS_CERT_PASSWORD $installer
+          if ($LASTEXITCODE -ne 0) { throw "Installer signing failed" }
+          & $signtool verify /pa /v $installer
+          if ($LASTEXITCODE -ne 0) { throw "Installer signature verification failed" }
+          Remove-Item $env:PFX_PATH -Force
+
+      - name: Compute SHA-256 and write manifest.json
+        run: |
+          VERSION=$(node -p "require('./electron/package.json').version")
+          ZIP_SHA=$(sha256sum StreamGuardian-OBS-Bridge-win32-x64.zip | awk '{print $1}')
+          EXE_SHA=$(sha256sum StreamGuardian-OBS-Bridge-Setup.exe | awk '{print $1}')
+          RELEASED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          BASE="https://azdhflrooyftnuzvgvye.supabase.co/storage/v1/object/public/companion-app"
+          cat > manifest.json <<EOF
+          {
+            "version": "$VERSION",
+            "releasedAt": "$RELEASED",
+            "notes": "Latest Stream Guardian OBS Bridge.",
+            "minSupported": "1.0.0",
+            "platforms": {
+              "win32-x64":  { "url": "$BASE/StreamGuardian-OBS-Bridge-win32-x64.zip",  "sha256": "$ZIP_SHA", "installerUrl": "$BASE/StreamGuardian-OBS-Bridge-Setup.exe", "installerSha256": "$EXE_SHA" },
+              "darwin-x64": { "url": "$BASE/StreamGuardian-OBS-Bridge-darwin-x64.zip", "sha256": "" },
+              "linux-x64":  { "url": "$BASE/StreamGuardian-OBS-Bridge-linux-x64.tar.gz","sha256": "" }
+            }
+          }
+          EOF
+          cat manifest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StreamGuardian-OBS-Bridge-win32-x64
+          path: |
+            StreamGuardian-OBS-Bridge-win32-x64.zip
+            StreamGuardian-OBS-Bridge-Setup.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-manifest
+          path: manifest.json
+
+      - name: Upload to Supabase Storage (companion-app bucket)
+        if: ${{ env.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        shell: bash
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          BASE="https://azdhflrooyftnuzvgvye.supabase.co/storage/v1/object/companion-app"
+          upload() {
+            local file="$1"; local name="$2"; local ctype="$3"
+            echo "Uploading $name ($(du -h "$file" | cut -f1))..."
+            curl --fail-with-body -sS -X POST "$BASE/$name" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "Content-Type: $ctype" \
+              -H "x-upsert: true" \
+              --data-binary "@$file"
+            echo
+          }
+          upload "StreamGuardian-OBS-Bridge-win32-x64.zip"  "StreamGuardian-OBS-Bridge-win32-x64.zip"  "application/zip"
+          upload "StreamGuardian-OBS-Bridge-Setup.exe"      "StreamGuardian-OBS-Bridge-Setup.exe"      "application/octet-stream"
+          upload "manifest.json"                            "manifest.json"                            "application/json"
+
+      - name: Warn when Supabase upload is skipped
+        if: ${{ env.SUPABASE_SERVICE_ROLE_KEY == '' }}
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "::warning::SUPABASE_SERVICE_ROLE_KEY secret not set — build artefacts were NOT pushed to the companion-app storage bucket. Download from the workflow artefacts and upload manually."
+

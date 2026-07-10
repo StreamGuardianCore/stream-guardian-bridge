@@ -1,0 +1,180 @@
+name: Build macOS Bridge
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install electron dependencies
+        working-directory: electron
+        run: |
+          rm -f package-lock.json
+          npm install --package-lock=false
+
+      - name: Package for macOS
+        working-directory: electron
+        run: |
+          npx --yes @electron/packager@19.1.0 . "StreamGuardian-OBS-Bridge" \
+            --platform=darwin --arch=x64 \
+            --out=../electron-release --overwrite
+
+      - name: Restructure for one-click launch
+        run: |
+          STAGE="$GITHUB_WORKSPACE/stage/StreamGuardian-OBS-Bridge"
+          mkdir -p "$STAGE/app"
+          mv electron-release/StreamGuardian-OBS-Bridge-darwin-x64/StreamGuardian-OBS-Bridge.app "$STAGE/app/"
+          cp electron/README.txt "$STAGE/README.txt"
+          cat > "$STAGE/Start Stream Guardian.command" <<'EOF'
+          #!/bin/sh
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          open "$DIR/app/StreamGuardian-OBS-Bridge.app"
+          EOF
+          chmod +x "$STAGE/Start Stream Guardian.command"
+
+      - name: Codesign + notarise (Developer ID)
+        id: codesign
+        if: ${{ secrets.APPLE_CERT_P12_BASE64 != '' }}
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/sg-build.keychain-db"
+          KEYCHAIN_PASS="sg-temp-$(uuidgen)"
+          P12="$RUNNER_TEMP/sg-cert.p12"
+          echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$P12"
+
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN" >/dev/null
+
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | grep "Developer ID Application" | head -n1 | awk '{print $2}')
+          echo "Using identity: $IDENTITY"
+
+          APP="$GITHUB_WORKSPACE/stage/StreamGuardian-OBS-Bridge/app/StreamGuardian-OBS-Bridge.app"
+
+          # Deep sign nested helpers/frameworks first, then the app bundle.
+          find "$APP/Contents/Frameworks" -type f \( -name "*.dylib" -o -name "*.framework" -o -perm +111 \) -print0 2>/dev/null | \
+            xargs -0 -I{} codesign --force --options runtime --timestamp --sign "$IDENTITY" "{}" || true
+          find "$APP/Contents/Frameworks" -type d -name "*.app" -print0 | \
+            xargs -0 -I{} codesign --force --options runtime --timestamp --sign "$IDENTITY" "{}"
+          codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
+
+          echo "Verifying codesign..."
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+          # Notarise
+          ZIP_FOR_NOTARY="$RUNNER_TEMP/notarize.zip"
+          /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP_FOR_NOTARY"
+          xcrun notarytool submit "$ZIP_FOR_NOTARY" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=2 "$APP"
+
+      - name: Warn when signing is skipped
+        if: ${{ secrets.APPLE_CERT_P12_BASE64 == '' }}
+        run: |
+          echo "::warning::APPLE_CERT_P12_BASE64 secret not set — shipping an unsigned/unnotarised macOS build. Users will see Gatekeeper warnings."
+
+      - name: Zip output
+        run: |
+          cd stage
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent StreamGuardian-OBS-Bridge ../StreamGuardian-OBS-Bridge-darwin-x64.zip
+
+      - name: Re-verify signature inside zipped payload
+        if: ${{ secrets.APPLE_CERT_P12_BASE64 != '' }}
+        run: |
+          rm -rf "$RUNNER_TEMP/verify"
+          mkdir -p "$RUNNER_TEMP/verify"
+          /usr/bin/ditto -x -k StreamGuardian-OBS-Bridge-darwin-x64.zip "$RUNNER_TEMP/verify"
+          codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/verify/StreamGuardian-OBS-Bridge/app/StreamGuardian-OBS-Bridge.app"
+          spctl --assess --type execute --verbose=2 "$RUNNER_TEMP/verify/StreamGuardian-OBS-Bridge/app/StreamGuardian-OBS-Bridge.app"
+
+      - name: Build DMG (clean one-file download)
+        run: |
+          set -euo pipefail
+          DMG_STAGE="$RUNNER_TEMP/dmg-stage"
+          rm -rf "$DMG_STAGE" && mkdir -p "$DMG_STAGE"
+          # Only the .app bundle + a symlink to /Applications — drag-to-install.
+          cp -R "stage/StreamGuardian-OBS-Bridge/app/StreamGuardian-OBS-Bridge.app" "$DMG_STAGE/"
+          ln -s /Applications "$DMG_STAGE/Applications"
+          hdiutil create -volname "Stream Guardian OBS Bridge" \
+            -srcfolder "$DMG_STAGE" -ov -format UDZO \
+            "StreamGuardian-OBS-Bridge.dmg"
+
+      - name: Sign + notarise DMG
+        if: ${{ secrets.APPLE_CERT_P12_BASE64 != '' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -n1 | awk '{print $2}')
+          codesign --force --sign "$IDENTITY" --timestamp StreamGuardian-OBS-Bridge.dmg
+          xcrun notarytool submit StreamGuardian-OBS-Bridge.dmg \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple StreamGuardian-OBS-Bridge.dmg
+          xcrun stapler validate StreamGuardian-OBS-Bridge.dmg
+
+      - name: Compute SHA-256
+        run: |
+          shasum -a 256 StreamGuardian-OBS-Bridge-darwin-x64.zip | tee StreamGuardian-OBS-Bridge-darwin-x64.zip.sha256
+          shasum -a 256 StreamGuardian-OBS-Bridge.dmg | tee StreamGuardian-OBS-Bridge.dmg.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StreamGuardian-OBS-Bridge-darwin-x64
+          path: |
+            StreamGuardian-OBS-Bridge-darwin-x64.zip
+            StreamGuardian-OBS-Bridge-darwin-x64.zip.sha256
+            StreamGuardian-OBS-Bridge.dmg
+            StreamGuardian-OBS-Bridge.dmg.sha256
+
+      - name: Upload to Supabase Storage (companion-app bucket)
+        if: ${{ env.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          BASE="https://azdhflrooyftnuzvgvye.supabase.co/storage/v1/object/companion-app"
+          upload() {
+            local file="$1"; local name="$2"; local ctype="$3"
+            echo "Uploading $name..."
+            curl --fail-with-body -sS -X POST "$BASE/$name" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "Content-Type: $ctype" \
+              -H "x-upsert: true" \
+              --data-binary "@$file"
+            echo
+          }
+          upload "StreamGuardian-OBS-Bridge-darwin-x64.zip" "StreamGuardian-OBS-Bridge-darwin-x64.zip" "application/zip"
+          [ -f "StreamGuardian-OBS-Bridge.dmg" ] && upload "StreamGuardian-OBS-Bridge.dmg" "StreamGuardian-OBS-Bridge.dmg" "application/x-apple-diskimage" || true
+
+      - name: Warn when Supabase upload is skipped
+        if: ${{ env.SUPABASE_SERVICE_ROLE_KEY == '' }}
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "::warning::SUPABASE_SERVICE_ROLE_KEY secret not set — macOS artefacts were NOT pushed to the companion-app bucket."
+

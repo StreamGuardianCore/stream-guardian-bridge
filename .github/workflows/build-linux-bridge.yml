@@ -1,0 +1,105 @@
+name: Build Linux Bridge
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install electron dependencies
+        working-directory: electron
+        run: |
+          rm -f package-lock.json
+          npm install --package-lock=false
+
+      - name: Package for Linux
+        working-directory: electron
+        run: |
+          npx --yes @electron/packager@19.1.0 . "StreamGuardian-OBS-Bridge" \
+            --platform=linux --arch=x64 \
+            --out=../electron-release --overwrite
+
+      - name: Restructure for one-click launch
+        run: |
+          STAGE="$GITHUB_WORKSPACE/stage/StreamGuardian-OBS-Bridge"
+          mkdir -p "$STAGE"
+          mv electron-release/StreamGuardian-OBS-Bridge-linux-x64 "$STAGE/app"
+          cp electron/README.txt "$STAGE/README.txt"
+          cat > "$STAGE/start-stream-guardian.sh" <<'EOF'
+          #!/bin/sh
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          exec "$DIR/app/StreamGuardian-OBS-Bridge" "$@"
+          EOF
+          chmod +x "$STAGE/start-stream-guardian.sh"
+
+      - name: Tar output
+        run: |
+          tar -czf StreamGuardian-OBS-Bridge-linux-x64.tar.gz -C stage StreamGuardian-OBS-Bridge
+
+      - name: GPG sign the archive
+        if: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$(mktemp -d)"
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')
+          echo "Signing with key $KEYID"
+          echo "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+            --local-user "$KEYID" --armor --detach-sign \
+            --output StreamGuardian-OBS-Bridge-linux-x64.tar.gz.asc \
+            StreamGuardian-OBS-Bridge-linux-x64.tar.gz
+          echo "Verifying signature..."
+          gpg --verify StreamGuardian-OBS-Bridge-linux-x64.tar.gz.asc StreamGuardian-OBS-Bridge-linux-x64.tar.gz
+
+      - name: Warn when GPG signing is skipped
+        if: ${{ secrets.GPG_PRIVATE_KEY == '' }}
+        run: |
+          echo "::warning::GPG_PRIVATE_KEY secret not set — Linux build will ship without a detached signature (SHA-256 only)."
+
+      - name: Compute SHA-256
+        run: |
+          sha256sum StreamGuardian-OBS-Bridge-linux-x64.tar.gz | tee StreamGuardian-OBS-Bridge-linux-x64.tar.gz.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StreamGuardian-OBS-Bridge-linux-x64
+          path: |
+            StreamGuardian-OBS-Bridge-linux-x64.tar.gz
+            StreamGuardian-OBS-Bridge-linux-x64.tar.gz.sha256
+            StreamGuardian-OBS-Bridge-linux-x64.tar.gz.asc
+          if-no-files-found: ignore
+
+      - name: Upload to Supabase Storage (companion-app bucket)
+        if: ${{ env.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          BASE="https://azdhflrooyftnuzvgvye.supabase.co/storage/v1/object/companion-app"
+          curl --fail-with-body -sS -X POST "$BASE/StreamGuardian-OBS-Bridge-linux-x64.tar.gz" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/gzip" \
+            -H "x-upsert: true" \
+            --data-binary "@StreamGuardian-OBS-Bridge-linux-x64.tar.gz"
+          echo
+
+      - name: Warn when Supabase upload is skipped
+        if: ${{ env.SUPABASE_SERVICE_ROLE_KEY == '' }}
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "::warning::SUPABASE_SERVICE_ROLE_KEY secret not set — Linux artefact was NOT pushed to the companion-app bucket."
+

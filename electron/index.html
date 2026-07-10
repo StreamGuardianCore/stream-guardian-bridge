@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stream Guardian — OBS Bridge</title>
+  <style>
+    @font-face {
+      font-family: 'Inter';
+      font-style: normal;
+      font-weight: 400;
+      font-display: block;
+      src: url('fonts/Inter-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Inter';
+      font-style: normal;
+      font-weight: 500;
+      font-display: block;
+      src: url('fonts/Inter-Medium.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Inter';
+      font-style: normal;
+      font-weight: 600;
+      font-display: block;
+      src: url('fonts/Inter-SemiBold.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Inter';
+      font-style: normal;
+      font-weight: 700;
+      font-display: block;
+      src: url('fonts/Inter-Bold.woff2') format('woff2');
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0a0b0f;
+      --surface: #13141a;
+      --surface-2: #1a1c24;
+      --line: rgba(255, 255, 255, 0.06);
+      --line-strong: rgba(255, 255, 255, 0.1);
+      --text: #e8e9ed;
+      --text-dim: #8a8d96;
+      --text-faint: #5a5d66;
+      --accent: #ff7a1a;
+      --accent-soft: #ff9a4d;
+      --ok: #34d399;
+      --err: #f87171;
+    }
+    html, body {
+      background: var(--bg);
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      font-feature-settings: 'cv11', 'ss01', 'ss03';
+    }
+
+    /* Custom title bar (frameless window) */
+    .titlebar {
+      width: 100%;
+      height: 32px;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      -webkit-app-region: drag;
+      user-select: none;
+      flex-shrink: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .titlebar .tb-shield {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+    }
+    .titlebar .tb-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.1px;
+    }
+    .titlebar .tb-title .tb-dim {
+      color: var(--text-faint);
+      font-weight: 500;
+      margin: 0 6px;
+    }
+
+    /* Thin orange accent bar */
+    .top-accent {
+      width: 100%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent) 50%, transparent);
+      opacity: 0.6;
+      flex-shrink: 0;
+    }
+
+    .content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 36px 28px 20px;
+      flex: 1;
+      width: 100%;
+    }
+
+    /* Brand lockup */
+    .brand {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 28px;
+    }
+    .logo-area {
+      position: relative;
+      width: 56px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 14px;
+    }
+    .logo-glow {
+      position: absolute;
+      inset: -20px;
+      background: radial-gradient(circle, rgba(255, 122, 26, 0.18) 0%, transparent 65%);
+      pointer-events: none;
+    }
+    .logo-area svg {
+      width: 48px;
+      height: 48px;
+      position: relative;
+      z-index: 1;
+    }
+    .wordmark {
+      font-size: 19px;
+      font-weight: 600;
+      letter-spacing: -0.4px;
+      color: #fff;
+    }
+    .subtitle-pill {
+      margin-top: 8px;
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      color: var(--accent);
+      padding: 4px 10px;
+      border: 1px solid rgba(255, 122, 26, 0.25);
+      border-radius: 999px;
+      background: rgba(255, 122, 26, 0.06);
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 22px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 12px 32px -16px rgba(0,0,0,0.6);
+    }
+
+    label {
+      display: block;
+      font-size: 10.5px;
+      color: var(--text-dim);
+      margin-bottom: 7px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+
+    input {
+      width: 100%;
+      padding: 11px 13px;
+      background: var(--surface-2);
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      color: var(--text);
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 13.5px;
+      outline: none;
+      margin-bottom: 16px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255, 122, 26, 0.15);
+    }
+    input::placeholder { color: var(--text-faint); }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 9px;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.1px;
+      transition: filter 0.15s, transform 0.08s;
+    }
+    button:hover { filter: brightness(1.08); }
+    button:active { transform: scale(0.985); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; filter: none; }
+
+    .btn-primary {
+      background: linear-gradient(180deg, var(--accent), #e8651a);
+      color: #fff;
+      box-shadow: 0 6px 18px -6px rgba(255, 122, 26, 0.45),
+                  0 0 0 1px rgba(255, 122, 26, 0.4) inset;
+    }
+    .btn-danger {
+      background: transparent;
+      color: var(--err);
+      border: 1px solid rgba(248, 113, 113, 0.3);
+      margin-top: 4px;
+    }
+    .btn-danger:hover { background: rgba(248, 113, 113, 0.08); filter: none; }
+
+    /* Status bar */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 14px;
+      border-radius: 9px;
+      font-size: 12.5px;
+      margin-bottom: 16px;
+      font-weight: 500;
+      background: var(--surface-2);
+      border: 1px solid var(--line);
+      color: var(--text-dim);
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--text-faint);
+    }
+    .status-ok {
+      color: #a7f3d0;
+      border-color: rgba(52, 211, 153, 0.2);
+    }
+    .status-ok .status-dot {
+      background: var(--ok);
+      box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.15);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    .status-err {
+      color: #fca5a5;
+      border-color: rgba(248, 113, 113, 0.25);
+    }
+    .status-err .status-dot { background: var(--err); }
+    .status-working .status-dot {
+      background: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255, 122, 26, 0.18);
+      animation: pulse-dot 1.4s ease-in-out infinite;
+    }
+    .hidden { display: none !important; }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* Update banner */
+    .update-banner {
+      width: 100%;
+      max-width: 420px;
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(255,122,26,0.10), rgba(255,122,26,0.04));
+      border: 1px solid rgba(255, 122, 26, 0.28);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .update-banner .row { display: flex; align-items: center; gap: 10px; }
+    .update-banner .title { font-size: 13px; font-weight: 600; color: #fff; flex: 1; }
+    .update-banner .notes { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+    .update-banner .actions { display: flex; gap: 8px; margin-top: 2px; }
+    .update-banner button { width: auto; padding: 7px 12px; font-size: 12px; border-radius: 7px; }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--line-strong);
+    }
+    .btn-ghost:hover { background: rgba(255,255,255,0.04); filter: none; }
+    .progress {
+      height: 6px;
+      background: var(--surface-2);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 2px;
+    }
+    .progress > span {
+      display: block; height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-soft));
+      transition: width 0.15s ease;
+    }
+    .footer-status { color: var(--text-dim); }
+    .footer-status.update { color: var(--accent); cursor: pointer; }
+    .footer-status.update:hover { text-decoration: underline; }
+
+    /* Settings card */
+    .settings-card {
+      width: 100%;
+      max-width: 420px;
+      margin-top: 16px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .settings-toggle {
+      width: 100%;
+      background: transparent;
+      color: var(--text);
+      border: none;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12.5px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      cursor: pointer;
+    }
+    .settings-toggle:hover { background: rgba(255,255,255,0.03); filter: none; }
+    .chev { color: var(--text-faint); transition: transform 0.2s; }
+    .settings-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
+    .settings-body {
+      padding: 4px 16px 16px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .row-label {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12.5px; color: var(--text); margin: 8px 0 0 0;
+      text-transform: none; letter-spacing: 0; font-weight: 500;
+    }
+    .row-label input[type="checkbox"] {
+      width: 36px; height: 20px; appearance: none; background: var(--surface-2);
+      border: 1px solid var(--line-strong); border-radius: 999px; position: relative;
+      cursor: pointer; margin: 0; padding: 0; transition: background 0.15s;
+    }
+    .row-label input[type="checkbox"]::after {
+      content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+      border-radius: 50%; background: var(--text-dim); transition: transform 0.15s, background 0.15s;
+    }
+    .row-label input[type="checkbox"]:checked { background: rgba(255,122,26,0.25); border-color: rgba(255,122,26,0.45); }
+    .row-label input[type="checkbox"]:checked::after { transform: translateX(16px); background: var(--accent); }
+    .settings-label {
+      display: block; font-size: 10.5px; color: var(--text-dim);
+      margin: 4px 0 0 0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px;
+    }
+    .settings-card select {
+      width: 100%; padding: 9px 11px; background: var(--surface-2);
+      border: 1px solid var(--line-strong); border-radius: 8px; color: var(--text);
+      font-size: 13px; outline: none; font-family: inherit;
+    }
+    .settings-card select:focus { border-color: var(--accent); }
+    .settings-actions { display: flex; align-items: center; gap: 12px; }
+    .settings-card .btn-ghost { width: auto; padding: 7px 12px; font-size: 12px; border-radius: 7px; }
+    .last-checked { font-size: 11.5px; color: var(--text-faint); }
+    .settings-hint { font-size: 11.5px; color: var(--text-faint); line-height: 1.5; margin: 0; }
+
+    .info {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-align: center;
+      margin-top: 18px;
+      line-height: 1.55;
+      max-width: 380px;
+    }
+
+    .footer {
+      font-size: 11px;
+      color: var(--text-faint);
+      text-align: center;
+      margin-top: auto;
+      padding: 16px 24px 18px;
+      line-height: 1.6;
+    }
+    .footer a {
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+    .footer a:hover { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="titlebar">
+    <svg class="tb-shield" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M512 100 L860 250 L860 520 C860 740 700 900 512 980 C324 900 164 740 164 520 L164 250 Z"
+            fill="none" stroke="#ff7a1a" stroke-width="80" stroke-linejoin="round"/>
+    </svg>
+    <span class="tb-title">Stream Guardian<span class="tb-dim">—</span>OBS Bridge</span>
+  </div>
+  <div class="top-accent"></div>
+
+  <div class="content">
+    <div class="brand">
+      <div class="logo-area">
+        <div class="logo-glow"></div>
+        <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" aria-label="Stream Guardian">
+          <path d="M512 100 L860 250 L860 520 C860 740 700 900 512 980 C324 900 164 740 164 520 L164 250 Z"
+                fill="none" stroke="#ff7a1a" stroke-width="40" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="wordmark">Stream Guardian</div>
+      <div class="subtitle-pill">OBS Bridge</div>
+    </div>
+
+    <div id="update-banner" class="update-banner hidden">
+      <div class="row"><div class="title" id="update-title">Update available</div></div>
+      <div class="notes" id="update-notes"></div>
+      <div class="progress hidden" id="update-progress"><span id="update-progress-bar"></span></div>
+      <div class="actions" id="update-actions">
+        <button class="btn-primary" id="btn-update-now">Update now</button>
+        <button class="btn-ghost" id="btn-update-later">Later</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="status-bar" class="status-bar">
+        <span class="status-dot"></span>
+        <span id="status-text">Not connected</span>
+      </div>
+
+      <div id="form-section">
+        <label for="bridge-code">Bridge Code</label>
+        <input id="bridge-code" type="text" placeholder="e.g. A1B2C3" maxlength="8" />
+
+        <label for="obs-url">OBS WebSocket URL</label>
+        <input id="obs-url" type="text" value="ws://localhost:4455" />
+
+        <label for="obs-password">OBS Password (optional)</label>
+        <input id="obs-password" type="password" placeholder="Leave empty if none" />
+
+        <button id="btn-connect" class="btn-primary">Connect Bridge</button>
+        <button id="btn-clear-creds" class="btn-ghost" style="margin-top:8px;width:100%;">Clear saved credentials</button>
+        <p id="creds-hint" class="settings-hint" style="margin-top:6px;"></p>
+      </div>
+
+      <div id="connected-section" class="hidden">
+        <button id="btn-disconnect" class="btn-danger">Disconnect</button>
+      </div>
+    </div>
+
+    <p class="info">
+      Enter the Bridge Code from your Stream Guardian dashboard,<br/>
+      then keep this app running while you stream.
+    </p>
+
+    <div class="settings-card">
+      <button class="settings-toggle" id="settings-toggle" aria-expanded="false">
+        <span>Update Settings</span>
+        <span class="chev" id="settings-chev">▾</span>
+      </button>
+      <div class="settings-body hidden" id="settings-body">
+        <label class="row-label">
+          <span>Automatically check for updates</span>
+          <input type="checkbox" id="set-auto-check" />
+        </label>
+
+        <label for="set-frequency" class="settings-label">Check frequency</label>
+        <select id="set-frequency">
+          <option value="3600000">Every hour</option>
+          <option value="21600000" selected>Every 6 hours</option>
+          <option value="43200000">Every 12 hours</option>
+          <option value="86400000">Once a day</option>
+          <option value="604800000">Once a week</option>
+        </select>
+
+        <div class="settings-actions">
+          <button class="btn-ghost" id="btn-check-now">Check now</button>
+          <span class="last-checked" id="last-checked">Never checked</span>
+        </div>
+        <p class="settings-hint">You can always trigger a manual check or install an update from the dashboard.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span id="footer-version">v1.0.0</span> · <span id="footer-status" class="footer-status">Stream Guardian</span><br/>
+    <a href="https://www.streamguardian.co.uk" target="_blank">www.streamguardian.co.uk</a>
+  </div>
+
+  <script>
+    const btnConnect = document.getElementById("btn-connect");
+    const btnDisconnect = document.getElementById("btn-disconnect");
+    const btnClearCreds = document.getElementById("btn-clear-creds");
+    const credsHint = document.getElementById("creds-hint");
+    const inputBridgeCode = document.getElementById("bridge-code");
+    const inputObsUrl = document.getElementById("obs-url");
+    const inputObsPassword = document.getElementById("obs-password");
+    const formSection = document.getElementById("form-section");
+    const connectedSection = document.getElementById("connected-section");
+    const statusBar = document.getElementById("status-bar");
+    const statusText = document.getElementById("status-text");
+
+    function setStatusUI(type, text) {
+      statusBar.className = "status-bar" + (type ? " status-" + type : "");
+      statusText.textContent = text;
+    }
+
+    // Prefill from saved credentials (URL + bridge code in plain JSON;
+    // password decrypted via Electron safeStorage in the main process).
+    (async () => {
+      try {
+        const saved = await window.creds.load();
+        if (saved.bridgeCode) inputBridgeCode.value = saved.bridgeCode;
+        if (saved.obsUrl) inputObsUrl.value = saved.obsUrl;
+        if (saved.obsPassword) inputObsPassword.value = saved.obsPassword;
+        if (saved.passwordSupported === false) {
+          credsHint.textContent = "Password not saved on this system (no keyring available).";
+        }
+      } catch {}
+    })();
+
+    btnConnect.addEventListener("click", async () => {
+      const bridgeCode = document.getElementById("bridge-code").value.trim().toUpperCase();
+      const obsUrl = document.getElementById("obs-url").value.trim();
+      const obsPassword = document.getElementById("obs-password").value;
+
+      if (!bridgeCode) { alert("Please enter a bridge code"); return; }
+      if (!obsUrl) { alert("Please enter the OBS WebSocket URL"); return; }
+
+      btnConnect.disabled = true;
+      btnConnect.textContent = "Connecting…";
+      setStatusUI("working", "Connecting…");
+
+      const result = await window.bridge.start({ bridgeCode, obsUrl, obsPassword });
+
+      if (result.success) {
+        // Persist the working credentials so the next launch is one-click.
+        try { await window.creds.save({ bridgeCode, obsUrl, obsPassword }); } catch {}
+        formSection.classList.add("hidden");
+        connectedSection.classList.remove("hidden");
+        setStatusUI("ok", "Bridge active — relaying OBS data");
+      } else {
+        setStatusUI("err", result.error || "Connection failed");
+        btnConnect.disabled = false;
+        btnConnect.textContent = "Connect Bridge";
+      }
+    });
+
+    btnClearCreds.addEventListener("click", async () => {
+      try { await window.creds.clear(); } catch {}
+      inputBridgeCode.value = "";
+      inputObsUrl.value = "ws://localhost:4455";
+      inputObsPassword.value = "";
+      credsHint.textContent = "Saved credentials cleared.";
+      setTimeout(() => { credsHint.textContent = ""; }, 3000);
+    });
+
+    btnDisconnect.addEventListener("click", async () => {
+      await window.bridge.stop();
+      formSection.classList.remove("hidden");
+      connectedSection.classList.add("hidden");
+      setStatusUI("", "Disconnected");
+      btnConnect.disabled = false;
+      btnConnect.textContent = "Connect Bridge";
+    });
+
+    window.bridge.onStatusUpdate((status) => {
+      if (status.error) {
+        setStatusUI("err", status.error);
+      } else if (status.bridgeConnected && status.obsConnected) {
+        setStatusUI("ok", "Bridge active — relaying OBS data");
+      } else if (status.obsConnected) {
+        setStatusUI("working", "OBS connected, joining channel…");
+      } else {
+        setStatusUI("working", "Waiting…");
+      }
+    });
+
+    // ---- Updater wiring ----
+    const updateBanner = document.getElementById("update-banner");
+    const updateTitle = document.getElementById("update-title");
+    const updateNotes = document.getElementById("update-notes");
+    const updateActions = document.getElementById("update-actions");
+    const updateProgress = document.getElementById("update-progress");
+    const updateProgressBar = document.getElementById("update-progress-bar");
+    const btnUpdateNow = document.getElementById("btn-update-now");
+    const btnUpdateLater = document.getElementById("btn-update-later");
+    const footerVersion = document.getElementById("footer-version");
+    const footerStatus = document.getElementById("footer-status");
+    let latestUpdateInfo = null;
+
+    (async () => {
+      try {
+        const v = await window.updater.getVersion();
+        footerVersion.textContent = "v" + v;
+      } catch {}
+    })();
+
+    function setBannerReady(version) {
+      updateTitle.textContent = `Bridge ${version || (latestUpdateInfo && latestUpdateInfo.latestVersion) || ""} ready to install`;
+      updateNotes.textContent = "Download complete. Restart the Bridge to apply the update — it will reconnect to OBS automatically.";
+      updateProgress.classList.add("hidden");
+      updateActions.classList.remove("hidden");
+      btnUpdateNow.textContent = "Restart to update";
+      btnUpdateNow.disabled = false;
+      btnUpdateLater.disabled = false;
+      footerStatus.textContent = "Update ready — restart to apply";
+      footerStatus.classList.add("update");
+    }
+
+    function setBannerDownloading() {
+      updateNotes.textContent = "Downloading update in the background… you can keep streaming.";
+      updateProgress.classList.remove("hidden");
+      updateActions.classList.remove("hidden");
+      btnUpdateNow.textContent = "Downloading…";
+      btnUpdateNow.disabled = true;
+      footerStatus.textContent = "Downloading update…";
+      footerStatus.classList.add("update");
+    }
+
+    function showBanner(info) {
+      latestUpdateInfo = info;
+      updateTitle.textContent = info.required
+        ? `Bridge ${info.latestVersion} required`
+        : `Bridge ${info.latestVersion} is available`;
+      updateNotes.textContent = info.notes || "A new version of the Bridge is ready to install.";
+      updateBanner.classList.remove("hidden");
+      footerStatus.textContent = "Update available";
+      footerStatus.classList.add("update");
+      footerStatus.onclick = () => updateBanner.scrollIntoView({ behavior: "smooth" });
+      if (info.required) btnUpdateLater.classList.add("hidden");
+
+      // Kick off a background download so the user can keep using the Bridge
+      // until they choose to restart.
+      startBackgroundDownload();
+    }
+
+    let backgroundDownloadStarted = false;
+    async function startBackgroundDownload() {
+      if (backgroundDownloadStarted) return;
+      backgroundDownloadStarted = true;
+      setBannerDownloading();
+      const res = await window.updater.download();
+      if (res && res.success) {
+        setBannerReady(res.version);
+      } else {
+        backgroundDownloadStarted = false;
+        updateNotes.textContent = (res && res.error) || "Background download failed. We'll retry on the next check.";
+        updateProgress.classList.add("hidden");
+        btnUpdateNow.textContent = "Try again";
+        btnUpdateNow.disabled = false;
+      }
+    }
+
+    async function runCheck() {
+      try {
+        const info = await window.updater.check();
+        if (info && info.ok && info.updateAvailable) {
+          showBanner(info);
+        } else if (info && info.ok) {
+          footerStatus.textContent = "Up to date";
+          footerStatus.classList.remove("update");
+        }
+      } catch {}
+    }
+
+    btnUpdateLater.addEventListener("click", () => {
+      if (latestUpdateInfo && latestUpdateInfo.required) return;
+      updateBanner.classList.add("hidden");
+    });
+
+    window.updater.onProgress((p) => {
+      if (p && p.phase === "ready") {
+        setBannerReady(p.version);
+        return;
+      }
+      if (p && p.phase === "error") {
+        backgroundDownloadStarted = false;
+        updateNotes.textContent = p.error || "Background download failed.";
+        updateProgress.classList.add("hidden");
+        btnUpdateNow.textContent = "Try again";
+        btnUpdateNow.disabled = false;
+        return;
+      }
+      if (!p || !p.total) return;
+      const pct = Math.min(100, Math.round((p.received / p.total) * 100));
+      updateProgressBar.style.width = pct + "%";
+    });
+
+    btnUpdateNow.addEventListener("click", async () => {
+      // If the update has already been downloaded in the background, just restart.
+      const state = await window.updater.getDownloadState();
+      if (state && state.status === "ready") {
+        btnUpdateNow.disabled = true;
+        btnUpdateLater.disabled = true;
+        updateNotes.textContent = "Restarting to finish update…";
+        const res = await window.updater.restart();
+        if (!(res && res.success)) {
+          updateNotes.textContent = (res && res.error) || "Restart failed. Please reopen the Bridge.";
+          btnUpdateNow.disabled = false;
+          btnUpdateLater.disabled = false;
+        }
+        return;
+      }
+      // Otherwise start (or retry) the background download.
+      backgroundDownloadStarted = false;
+      startBackgroundDownload();
+    });
+
+    // On startup, rehydrate the banner if a download is already staged
+    // (e.g. user dismissed it earlier without restarting).
+    (async () => {
+      try {
+        const s = await window.updater.getDownloadState();
+        if (s && s.status === "ready") {
+          updateBanner.classList.remove("hidden");
+          backgroundDownloadStarted = true;
+          setBannerReady(s.version);
+        } else if (s && s.status === "downloading") {
+          updateBanner.classList.remove("hidden");
+          backgroundDownloadStarted = true;
+          setBannerDownloading();
+        }
+      } catch {}
+    })();
+
+    // ---- Update settings ----
+    const SETTINGS_KEY = "sg-updater-settings";
+    const DEFAULT_SETTINGS = { autoCheck: true, frequencyMs: 21600000 };
+
+    function loadSettings() {
+      try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (!raw) return { ...DEFAULT_SETTINGS };
+        const parsed = JSON.parse(raw);
+        return { ...DEFAULT_SETTINGS, ...parsed };
+      } catch { return { ...DEFAULT_SETTINGS }; }
+    }
+    function saveSettings(s) {
+      try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch {}
+    }
+
+    const settingsToggle = document.getElementById("settings-toggle");
+    const settingsBody = document.getElementById("settings-body");
+    const setAutoCheck = document.getElementById("set-auto-check");
+    const setFrequency = document.getElementById("set-frequency");
+    const btnCheckNow = document.getElementById("btn-check-now");
+    const lastCheckedEl = document.getElementById("last-checked");
+
+    let settings = loadSettings();
+    let checkTimer = null;
+    let lastCheckedAt = null;
+
+    settingsToggle.addEventListener("click", () => {
+      const open = settingsBody.classList.toggle("hidden") === false;
+      settingsToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+
+    function applySettingsToUI() {
+      setAutoCheck.checked = settings.autoCheck;
+      setFrequency.value = String(settings.frequencyMs);
+      setFrequency.disabled = !settings.autoCheck;
+    }
+
+    function formatLastChecked() {
+      if (!lastCheckedAt) { lastCheckedEl.textContent = "Never checked"; return; }
+      const mins = Math.round((Date.now() - lastCheckedAt) / 60000);
+      lastCheckedEl.textContent = mins < 1
+        ? "Checked just now"
+        : mins < 60 ? `Checked ${mins} min ago`
+        : `Checked ${Math.round(mins / 60)}h ago`;
+    }
+
+    function rescheduleAutoCheck() {
+      if (checkTimer) { clearInterval(checkTimer); checkTimer = null; }
+      if (settings.autoCheck) {
+        checkTimer = setInterval(runCheck, settings.frequencyMs);
+      }
+    }
+
+    setAutoCheck.addEventListener("change", () => {
+      settings.autoCheck = setAutoCheck.checked;
+      saveSettings(settings);
+      applySettingsToUI();
+      rescheduleAutoCheck();
+      if (!settings.autoCheck) {
+        footerStatus.textContent = "Auto-updates off";
+        footerStatus.classList.remove("update");
+      }
+    });
+    setFrequency.addEventListener("change", () => {
+      settings.frequencyMs = parseInt(setFrequency.value, 10) || DEFAULT_SETTINGS.frequencyMs;
+      saveSettings(settings);
+      rescheduleAutoCheck();
+    });
+    btnCheckNow.addEventListener("click", async () => {
+      btnCheckNow.disabled = true;
+      const prevText = btnCheckNow.textContent;
+      btnCheckNow.textContent = "Checking…";
+      await runCheck();
+      btnCheckNow.textContent = prevText;
+      btnCheckNow.disabled = false;
+    });
+
+    // Wrap runCheck to track last-checked timestamp
+    const _runCheck = runCheck;
+    runCheck = async function () {
+      await _runCheck();
+      lastCheckedAt = Date.now();
+      formatLastChecked();
+    };
+
+    setInterval(formatLastChecked, 60000);
+
+    applySettingsToUI();
+    if (settings.autoCheck) {
+      runCheck();
+      rescheduleAutoCheck();
+    } else {
+      footerStatus.textContent = "Auto-updates off";
+    }
+  </script>
+</body>
+</html>
