@@ -3,6 +3,9 @@ name: Build Windows Bridge
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -162,6 +165,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          trap 'status=$?; echo "::error::GitHub Release publishing failed. If this shows HTTP 403 Resource not accessible by integration, open the repository on GitHub, go to Settings → Actions → General → Workflow permissions, choose Read and write permissions, save, then re-run this workflow."; exit $status' ERR
           VERSION=$(node -p "require('./electron/package.json').version")
           TAG="v$VERSION"
           # Create the release if it doesn't exist, otherwise reuse it and upload assets with --clobber
