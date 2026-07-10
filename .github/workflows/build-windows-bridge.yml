@@ -156,6 +156,28 @@ jobs:
           name: bridge-manifest
           path: manifest.json
 
+      - name: Publish GitHub Release (evergreen Setup.exe download)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./electron/package.json').version")
+          TAG="v$VERSION"
+          # Create the release if it doesn't exist, otherwise reuse it and upload assets with --clobber
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "Stream Guardian OBS Bridge $VERSION" \
+              --notes "Automated build of the Stream Guardian OBS Bridge." \
+              --latest
+          fi
+          gh release upload "$TAG" \
+            "StreamGuardian-OBS-Bridge-Setup.exe" \
+            "StreamGuardian-OBS-Bridge-win32-x64.zip" \
+            "manifest.json" \
+            --clobber
+
+
       - name: Upload to Supabase Storage (companion-app bucket)
         if: ${{ env.SUPABASE_SERVICE_ROLE_KEY != '' }}
         shell: bash

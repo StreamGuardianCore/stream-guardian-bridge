@@ -523,6 +523,10 @@
 
     // Prefill from saved credentials (URL + bridge code in plain JSON;
     // password decrypted via Electron safeStorage in the main process).
+    // If a full set of credentials is present, auto-connect on launch so
+    // returning users don't have to click anything.
+    let autoConnectTimer = null;
+    let autoConnectCancelled = false;
     (async () => {
       try {
         const saved = await window.creds.load();
@@ -532,8 +536,31 @@
         if (saved.passwordSupported === false) {
           credsHint.textContent = "Password not saved on this system (no keyring available).";
         }
+
+        const canAutoConnect = !!(saved.bridgeCode && saved.obsUrl);
+        if (!canAutoConnect) return;
+
+        // Give the user a brief window to cancel before we auto-connect.
+        setStatusUI("working", "Auto-connecting with saved credentials…");
+        credsHint.innerHTML = 'Auto-connecting… <a href="#" id="cancel-auto">Cancel</a>';
+        const cancelLink = document.getElementById("cancel-auto");
+        if (cancelLink) {
+          cancelLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            autoConnectCancelled = true;
+            if (autoConnectTimer) clearTimeout(autoConnectTimer);
+            credsHint.textContent = "Auto-connect cancelled. Edit values and click Connect Bridge.";
+            setStatusUI("", "Ready");
+          });
+        }
+        autoConnectTimer = setTimeout(() => {
+          if (autoConnectCancelled) return;
+          credsHint.textContent = "";
+          btnConnect.click();
+        }, 1200);
       } catch {}
     })();
+
 
     btnConnect.addEventListener("click", async () => {
       const bridgeCode = document.getElementById("bridge-code").value.trim().toUpperCase();
