@@ -5,6 +5,7 @@
 Unicode true
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
+!include "LogicLib.nsh"
 
 !define PRODUCT_NAME "Stream Guardian OBS Bridge"
 !define PRODUCT_SHORT "StreamGuardian-OBS-Bridge"
@@ -57,6 +58,22 @@ VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install"
+  ; Close any running instance so we can overwrite the .exe
+  nsExec::Exec 'taskkill /F /IM "${PRODUCT_EXE}" /T'
+  Sleep 800
+
+  ; Silently uninstall a previous version if present (keeps user data in %APPDATA%)
+  ReadRegStr $0 HKCU "${PRODUCT_REGKEY}" "UninstallString"
+  ReadRegStr $1 HKCU "${PRODUCT_REGKEY}" "InstallLocation"
+  ${If} $0 != ""
+    ${If} $1 != ""
+      ExecWait '"$0" /S _?=$1'
+    ${Else}
+      ExecWait '"$0" /S'
+    ${EndIf}
+    Sleep 500
+  ${EndIf}
+
   SetOutPath "$INSTDIR"
   ; Recursively copy the entire packaged Electron app folder contents.
   File /r "${SOURCE_DIR}\*.*"
