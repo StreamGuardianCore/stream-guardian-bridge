@@ -148,18 +148,6 @@ jobs:
           EOF
           cat manifest.json
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: StreamGuardian-OBS-Bridge-win32-x64
-          path: |
-            StreamGuardian-OBS-Bridge-win32-x64.zip
-            StreamGuardian-OBS-Bridge-Setup.exe
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bridge-manifest
-          path: manifest.json
-
       - name: Publish GitHub Release (evergreen Setup.exe download)
         shell: bash
         env:
