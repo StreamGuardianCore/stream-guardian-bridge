@@ -463,8 +463,10 @@
         <label for="obs-url">OBS WebSocket URL</label>
         <input id="obs-url" type="text" value="ws://localhost:4455" />
 
-        <label for="obs-password">OBS Password (optional)</label>
-        <input id="obs-password" type="password" placeholder="Leave empty if none" />
+      <label for="obs-password">WebSocket Server Password</label>
+<input id="obs-password" type="password" placeholder="Leave empty if authentication is off" />
+<p class="settings-hint" style="margin:4px 0 10px;">Not your OBS account password. Find it in OBS under Tools → WebSocket Server Settings → Show Connect Info.</p>
+
 
         <button id="btn-connect" class="btn-primary">Connect Bridge</button>
         <button id="btn-clear-creds" class="btn-ghost" style="margin-top:8px;width:100%;">Clear saved credentials</button>
