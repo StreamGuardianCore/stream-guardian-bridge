@@ -49,10 +49,18 @@ async function startBridge({ bridgeCode, obsUrl, obsPassword, onStatusChange }) 
     await obs.connect(obsUrl, obsPassword || undefined);
     setStatus({ obsConnected: true });
     console.log("[Bridge] Connected to OBS at", obsUrl);
-  } catch (err) {
-    setStatus({ obsConnected: false, error: `OBS connection failed: ${err.message || err}` });
-    throw new Error(`Cannot connect to OBS: ${err.message || err}`);
+ } catch (err) {
+  const raw = String(err?.message || err);
+  let friendly = `Cannot connect to OBS: ${raw}`;
+  if (/authentication/i.test(raw) && /missing|required/i.test(raw)) {
+    friendly = "OBS needs your WebSocket Server Password. In OBS go to Tools → WebSocket Server Settings → Show Connect Info, copy the password and paste it here.";
+  } else if (/authentication failed|4009/i.test(raw)) {
+    friendly = "That WebSocket Server Password is wrong. Copy it again from OBS: Tools → WebSocket Server Settings → Show Connect Info.";
   }
+  setStatus({ obsConnected: false, error: friendly });
+  throw new Error(friendly);
+}
+
 
   obs.on("ConnectionClosed", () => {
     setStatus({ obsConnected: false, error: "OBS connection closed" });
