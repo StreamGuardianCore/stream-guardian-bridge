@@ -11,7 +11,11 @@ const crypto = require("crypto");
 const { spawn, execFile } = require("child_process");
 const { app } = require("electron");
 
-const MANIFEST_URL =
+// Primary source: the latest GitHub Release (published by every CI build).
+// Fallback: the legacy storage mirror. The newest version across both wins.
+const GITHUB_REPO = "StreamGuardianCore/stream-guardian-bridge";
+const GITHUB_MANIFEST_URL = `https://github.com/${GITHUB_REPO}/releases/latest/download/manifest.json`;
+const STORAGE_MANIFEST_URL =
   "https://azdhflrooyftnuzvgvye.supabase.co/storage/v1/object/public/companion-app/manifest.json";
 
 let pkgVersion = "0.0.0";
@@ -55,8 +59,38 @@ function httpGet(url, opts = {}) {
   });
 }
 
+// Point every asset URL at the GitHub Release for that exact version, so
+// downloads never depend on the storage mirror being in sync.
+function rewriteToGithubAssets(manifest) {
+  if (!manifest || !manifest.version || !manifest.platforms) return manifest;
+  const base = `https://github.com/${GITHUB_REPO}/releases/download/v${manifest.version}`;
+  for (const key of Object.keys(manifest.platforms)) {
+    const p = manifest.platforms[key];
+    if (!p) continue;
+    if (p.url) p.url = `${base}/${p.url.split("/").pop()}`;
+    if (p.installerUrl) p.installerUrl = `${base}/${p.installerUrl.split("/").pop()}`;
+  }
+  return manifest;
+}
+
 async function fetchManifest() {
-  const url = `${MANIFEST_URL}?t=${Date.now()}`;
+  const [gh, storage] = await Promise.allSettled([
+    fetchManifestFrom(GITHUB_MANIFEST_URL).then(rewriteToGithubAssets),
+    fetchManifestFrom(STORAGE_MANIFEST_URL),
+  ]);
+  const candidates = [gh, storage]
+    .filter((r) => r.status === "fulfilled" && r.value && r.value.version)
+    .map((r) => r.value);
+  if (!candidates.length) {
+    const reason = (gh.reason && gh.reason.message) || (storage.reason && storage.reason.message);
+    throw new Error(reason || "Could not reach the update server");
+  }
+  // Prefer the newest version; on a tie, the GitHub copy (listed first) wins.
+  return candidates.reduce((best, m) => (compareSemver(m.version, best.version) > 0 ? m : best));
+}
+
+async function fetchManifestFrom(baseUrl) {
+  const url = `${baseUrl}?t=${Date.now()}`;
   const res = await httpGet(url, { timeout: 10000 });
   return new Promise((resolve, reject) => {
     let body = "";
