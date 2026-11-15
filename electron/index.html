@@ -205,10 +205,11 @@
       margin-bottom: 16px;
       transition: border-color 0.15s, box-shadow 0.15s;
     }
-    input:focus {
+        input:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(255, 122, 26, 0.15);
     }
+    input.input-invalid { border-color: var(--err) !important; box-shadow: 0 0 0 3px rgba(248,113,113,0.15); }
     input::placeholder { color: var(--text-faint); }
 
     button {
@@ -529,6 +530,20 @@
     const connectedSection = document.getElementById("connected-section");
     const statusBar = document.getElementById("status-bar");
     const statusText = document.getElementById("status-text");
+    // Inline validation — never use alert(): native dialogs in the frameless
+    // window steal keyboard focus and leave inputs unable to receive typing.
+    function flagInvalid(input, message) {
+      input.classList.add("input-invalid");
+      setStatusUI("err", message);
+      input.focus();
+    }
+    [inputBridgeCode, inputObsUrl].forEach((el) => {
+      el.addEventListener("input", () => {
+        if (!el.classList.contains("input-invalid")) return;
+        el.classList.remove("input-invalid");
+        setStatusUI("", "Ready");
+      });
+    });
 
     function setStatusUI(type, text) {
       statusBar.className = "status-bar" + (type ? " status-" + type : "");
@@ -581,8 +596,9 @@
       const obsUrl = document.getElementById("obs-url").value.trim();
       const obsPassword = document.getElementById("obs-password").value;
 
-      if (!bridgeCode) { alert("Please enter a bridge code"); return; }
-      if (!obsUrl) { alert("Please enter the OBS WebSocket URL"); return; }
+          if (!bridgeCode) { flagInvalid(inputBridgeCode, "Please enter your Stream Guardian bridge code"); return; }
+      if (!obsUrl) { flagInvalid(inputObsUrl, "Please enter the OBS WebSocket URL"); return; }
+
 
       btnConnect.disabled = true;
       btnConnect.textContent = "Connecting…";
